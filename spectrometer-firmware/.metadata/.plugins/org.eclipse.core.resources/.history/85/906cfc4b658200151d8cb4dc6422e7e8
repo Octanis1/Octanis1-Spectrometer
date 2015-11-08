@@ -1,0 +1,228 @@
+#include <msp430.h>
+#include <stdio.h>
+
+/*
+ * main.c
+ */
+
+#define SPECTRO_LENGTH (2048 + 200)
+
+int spectroBuffer[SPECTRO_LENGTH];
+char charBuffer[16];
+volatile char uartIn;
+volatile char uartBusy = 0;
+
+//ADC sample interrupt
+#pragma vector=TIMERB0_VECTOR
+__interrupt void TIMERB0_ISR(void)
+{
+	ADC12CTL0 |= ADC12SC;
+}
+
+//UART I/O interrupt
+#pragma vector=USCI_A0_VECTOR
+__interrupt void USCI_A0_ISR(void)
+{
+  switch(__even_in_range(UCA0IV,4))
+  {
+  case 0:break;                             // Vector 0 - no interrupt
+  case 2:                                   // Vector 2 - RXIFG
+    uartIn = UCA0RXBUF;                  // TX -> RXed character
+    break;
+  case 4:
+	uartBusy = 0;
+	  break;                             // Vector 4 - TXIFG //Signal last character sent
+  default: break;
+  }
+}
+
+int main(void) {
+	int i, j, k;
+
+    WDTCTL = WDTPW | WDTHOLD;	// Stop watchdog timer
+
+    /* Port IO definitions */
+    P1DIR |= BIT2;                            // P1.2 output (mastre clock 100kHz)
+    P1SEL |= BIT2;                            // P1.2 used as timer output
+    P1DIR |= BIT4;                            // P1.4 output (read enable)
+    P2DIR |= BIT0;                            // P2.0 output (integration clock max 100kHz/2048)
+    P2SEL |= BIT0;                            // P2.0 used as timer output
+    P5DIR &= ~BIT6;                            // P5.6 as input (A/D triggger)
+    P5SEL |= BIT6;                            // P5.6 used as timer input
+
+    P3SEL |= BIT3+BIT4;                       // P3.3,4 = USCI_A0 TXD/RXD
+//    P3SEL |= BIT0+BIT1+BIT2					  // P3.0,1,2 = USCI_B0 SIMO/SOMI/CLK //TODO SPI
+
+    P6SEL |= 0xff;							  // All pins of P6 (P6.0 to P6.7) used as analog in
+
+    /* Clock selection (8 MHz using DCO) */
+    UCSCTL3 = SELREF_2;                       // Set DCO FLL reference = REFO
+    UCSCTL4 |= SELA_2;                        // Set ACLK = REFO
+    UCSCTL0 = 0x0000;                         // Set lowest possible DCOx, MODx
+
+    // Loop until XT1,XT2 & DCO stabilizes - In this case only DCO has to stabilize
+    do
+    {
+      UCSCTL7 &= ~(XT2OFFG + XT1LFOFFG + DCOFFG);
+                                              // Clear XT2,XT1,DCO fault flags
+      SFRIFG1 &= ~OFIFG;                      // Clear fault flags
+    }while (SFRIFG1&OFIFG);                   // Test oscillator fault flag
+
+    __bis_SR_register(SCG0);                  // Disable the FLL control loop
+    UCSCTL1 = DCORSEL_5;                      // Select DCO range 16MHz operation
+    UCSCTL2 |= 249;                           // Set DCO Multiplier for 8MHz
+                                              // (N + 1) * FLLRef = Fdco
+                                              // (249 + 1) * 32768 = 8MHz
+    __bic_SR_register(SCG0);                  // Enable the FLL control loop
+
+    // Worst-case settling time for the DCO when the DCO range bits have been
+    // changed is n x 32 x 32 x f_MCLK / f_FLL_reference. See UCS chapter in 5xx
+    // UG for optimization.
+    // 32 x 32 x 8 MHz / 32,768 Hz = 250000 = MCLK cycles for DCO to settle
+    __delay_cycles(250000);
+
+
+
+    // Summary
+    // Wait for command over SPI/UART to start conversion
+    // Set conversion in progress bit disabling ram readout
+    // Enable timer TA0 and TA1 to generate Master and Integration clock
+    // Enable DMA single to block (copy adc val to ram)
+    // Enable ADC 2.5 V ref, Single conversion, 12bit,
+    // Enable timer TA2 as input for ADC sample clock
+    // Set read enable bit
+
+    // Conversion happens (count events)
+
+    // Clear read enable bit
+    // Clear conversion in progress bit, reenabling ram readout
+    // If requested, use DMA to readout ram over SPI/UART
+
+
+    /* Setup UART */
+    UCA0CTL1 |= UCSWRST;                      // **Put state machine in reset**
+    //UCACTL0 = 0x00;                           // Standard UART, no partity, LSB first, 8bit 1 stopbit
+//    UCA0CTL1 |= UCSSEL_2;                     // SMCLK
+//    UCA0BR0 = 69;                             // 8MHz 115200 (see User's Guide) 69
+//    UCA0BR1 = 0;
+//    UCA0MCTL |= UCBRS_4 + UCBRF_0;            // Modulation UCBRSx=4, UCBRFx=0
+
+    UCA0CTL1 |= UCSSEL_2;                     // SMCLK
+    UCA0BR0 = 65;                             // 8MHz 9600 (see User's Guide) 833
+    UCA0BR1 = 3;
+    UCA0MCTL |= UCBRS_2 + UCBRF_0;            // Modulation UCBRSx=4, UCBRFx=0
+
+//    UCA0CTL1 |= UCSSEL_1;                     // ACLK
+//    UCA0BR0 = 27;                             // 32kHz 1200 (see User's Guide) 27
+//    UCA0BR1 = 0;
+//    UCA0MCTL |= UCBRS_2 + UCBRF_0;            // Modulation UCBRSx=2, UCBRFx=0
+
+    UCA0CTL1 &= ~UCSWRST;                     // **Initialize USCI state machine**
+    UCA0IE |= UCRXIE;                         // Enable USCI_A0 RX interrupt
+//    UCA0IE |= UCTXIE;
+
+    /* TODO Setup SPI (Slave mode)*/
+//    P3SEL |= BIT3+BIT4;                       // P3.3,4 option select
+//    P2SEL |= BIT7;                            // P2.7 option select
+//    UCB0CTL1 |= UCSWRST;                      // **Put state machine in reset**
+//    UCB0CTL0 |= UCSYNC+UCCKPL+UCMSB;          // 3-pin, 8-bit SPI slave,
+//                                              // Clock polarity high, MSB
+//    UCB0CTL1 &= ~UCSWRST;                     // **Initialize USCI state machine**
+////    UCB0IE |= UCRXIE;                         // Enable USCI_A0 RX interrupt
+
+    /* Setup clocking timer (TA0 and TA1) */
+    TA0CCTL1 = OUTMOD_4;                      // CCR1 toggle mode
+    TA0CCR1 = 40-1;                           // 8 MHz / 40 / 2 = 100 kHz
+    TA0CCR0 = 40-1;                           // Set CCR0 = CCR1 as counts up to CCR0
+    TA0CTL = TASSEL_2 + MC_1 + TACLR;         // ACLK, upmode, clear TAR
+
+    TA1CCTL1 = OUTMOD_4;                      // CCR1 toggle mode
+    TA1CCR1 = 50000-1;                        // 8 MHz / 8 / 50000 / 2 = 10 Hz
+    TA1CCR0 = 50000-1;                        // Set CCR0 = CCR1 as counts up to CCR0
+    TA1CTL = TASSEL_2 + ID_2 + ID_1 + MC_1 + TACLR;         // ACLK, prescaler of 8, upmode, clear TAR
+
+    /* Setup DMA0 */
+    //Fixed address to block
+    //Single transfer
+    //Trigger 24 ADC12IFGx
+    //DMA RMW DIS (No DMA during read-modify-write instruction)
+    DMACTL0 = DMA0TSEL_24; //ADC12IFGx as trigger for DMA0
+    DMACTL4 = DMARMWDIS; //Disable DMA during read-modify-write
+    DMA0CTL &= ~DMAIFG; //Erase pending DMA0 interrupts
+    DMA0CTL = DMADSTINCR_3 /*+ DMAEN*/; //Single transfer, inc destination
+    DMA0SZ = SPECTRO_LENGTH; //amount of peaks equals amount of data read in
+    __data16_write_addr((unsigned short) &DMA0SA,(unsigned long) &ADC12MEM0);
+                                                  // Source block address
+    __data16_write_addr((unsigned short) &DMA0DA,(unsigned long) spectroBuffer);
+                                                  // Destination single address
+
+    /* Setup Reference voltage for ADC */
+    REFCTL0 = REFMSTR + REFVSEL_2 + REFTCOFF + REFON; //Control from REF registers, 2.5 V reference, Temp sensor off, Reference on
+
+    /* Setup ADC */
+    ADC12CTL0 = ADC12SHT0_1 + ADC12ON;            // enable ADC12, 8 ADC12CLK sampling time
+    ADC12CTL1 = ADC12CSTARTADD_0/* + ADC12SHS_2 */    // Startaddr 0, Timer SHS source TB0.0, Clock divider 2, MCLK source
+    		  + ADC12SHP + ADC12DIV_1 + ADC12SSEL_2;
+    ADC12CTL2 = ADC12RES_2;                       // 12 bit ADC resolution
+    ADC12MCTL0 = ADC12EOS + ADC12SREF_1 + ADC12INCH_0; // Enf of Sequence, Vref/AVSS reference, Channel A0
+
+
+    for ( i=0; i<0x30; i++);                      // Delay for reference start-up
+
+//    ADC12CTL0 |= ADC12ENC;                        // Enable conversions
+
+    /* Setup input timer (TB0) (capture mode) */
+    TB0CTL = TBSSEL_1 + MC_2;                     // ACLK, continuous mode
+    TB0CCTL0 = CM_1 + CCIS_1 + CAP  + CCIE;       // Rising edge, CCI0B input, Capture mode, Interrupt enabled
+
+    __bis_SR_register(GIE);       // enable interrupts
+
+    /* Program */
+    //Check for DMA if finished
+
+    while(1)
+    {
+    	//Wait for sample command
+    	//while(uartIn != 'S')
+    	//{
+    	//	//Enter low power mode, SPI interrupt wakes up for "polling"
+    	//}
+
+    	/* Enable DMA0*/
+		DMA0CTL &= ~DMAIFG; //Erase pending DMA0 interrupts
+		DMA0CTL |= DMAEN; //Enable DMA0
+
+		/* Reenable ADC */
+		ADC12CTL0 |= ADC12ENC;                        // Enable conversions
+
+		/* Set read enable bit */
+		P1OUT |= BIT4;
+		//ADC12CTL0 |= ADC12SC;
+
+    	//TODO go to sleep mode wake up on DMA interrupt
+    	__delay_cycles(2400000); // delay 0.3s at 8MHz
+
+    	P1OUT &= ~(BIT4);
+    	ADC12CTL0 &= ~(ADC12ENC);
+
+    	//send buffered data (over UART, todo SPI)
+    	for(i = 0; i < SPECTRO_LENGTH; i++)
+    	{
+    		k = sprintf(charBuffer, "%d\n", spectroBuffer[i]);
+    		for(j = 0; j < k; j++)
+    		{
+//    			while(uartBusy);
+//    			uartBusy = 1;
+    			while (!(UCA0IFG&UCTXIFG));             // USCI_A0 TX buffer ready?
+    			__delay_cycles(80); // delay 0.00001s at 8MHz
+//TODO wait correctly for previous character to be sent
+//    			UCA0IFG &= ~UCTXIFG;                    // Erase pending interrupts
+    			UCA0TXBUF = charBuffer[j];
+    		}
+    	}
+    }
+
+    __bis_SR_register(LPM3_bits);             // Enter LPM3
+    __no_operation();                         // For debugger
+	return 0;
+}
