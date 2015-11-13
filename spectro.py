@@ -16,6 +16,7 @@ import serial
 import matplotlib
 ser = serial.Serial(
     port=raw_input('Please enter serial port: '),
+    #port='COM11',
     baudrate=115200,
     parity=serial.PARITY_ODD,
     stopbits=serial.STOPBITS_ONE,
@@ -37,6 +38,11 @@ dataBuffer = charIn
 while charIn != '\n' :
     charIn = ser.read(1)
     dataBuffer += charIn
+
+#uncomment to save to file
+#f = open('tempresults.csv', 'w')
+#f.write(dataBuffer)
+#f.close()
 
 myValuesString = dataBuffer.split(',')
 myValuesInt = []
