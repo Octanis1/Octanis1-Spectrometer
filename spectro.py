@@ -23,12 +23,8 @@ import numpy as np
 
 
 ser = serial.Serial(
-<<<<<<< HEAD
     port="/dev/cu.usbmodem14123",
-=======
-    port=raw_input('Please enter serial port: '),
-    #port='COM11',
->>>>>>> 74eed0e3d2ea8526ab55a71ce02d6b4730ffe6bf
+
     baudrate=115200,
     parity=serial.PARITY_ODD,
     stopbits=serial.STOPBITS_ONE,
@@ -41,34 +37,11 @@ ser.isOpen()
 
 while 1:
 
-<<<<<<< HEAD
     
     print 'Opened serial port' 
     
     #get rid of incomplete dataset
     while ser.read(1) != '\n' :
-=======
-#while 1 :
-charIn = ser.read(1)
-dataBuffer = charIn
-while charIn != '\n' :
-    charIn = ser.read(1)
-    dataBuffer += charIn
-
-#uncomment to save to file
-#f = open('tempresults.csv', 'w')
-#f.write(dataBuffer)
-#f.close()
-
-myValuesString = dataBuffer.split(',')
-myValuesInt = []
-myValuesLength = 0
-for singleValue in myValuesString:
-    try:
-        myValuesInt.append(int(singleValue))
-        myValuesLength+=1
-    except:
->>>>>>> 74eed0e3d2ea8526ab55a71ce02d6b4730ffe6bf
         pass
     #while 1 :
     charIn = ser.read(1)
@@ -87,7 +60,6 @@ for singleValue in myValuesString:
            
             myValuesLength+=1
            
-            
         except:
             pass
     
